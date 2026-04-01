@@ -1,0 +1,39 @@
+plain:
+  - plain
+  - nc
+  - noncontrast
+  - non-contrast
+  - without contrast
+  - precontrast
+  - 平扫
+  - 非增强
+  - 无增强
+  - C-
+arterial:
+  - arterial
+  - art
+  - a-phase
+  - 动脉
+  - 动脉期
+  - A 
+venous:
+  - venous
+  - portal
+  - pv
+  - v-phase
+  - 静脉
+  - 静脉期
+  - 门静脉
+  - 门脉
+  - V 
+delayed:
+  - delayed
+  - delay
+  - d-phase
+  - 延迟
+  - 延迟期
+  - D 
+
+cta:
+  - cta
+unknown: []
