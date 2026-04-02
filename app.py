@@ -7,7 +7,14 @@ import tkinter as tk
 import traceback
 from tkinter import filedialog, messagebox, ttk
 
-from converter import ConversionConfig, NiftiCleanConfig, clean_nifti_by_max_spacing, run_conversion
+from converter import (
+    ConversionConfig,
+    NiftiCleanConfig,
+    NiftiResampleConfig,
+    clean_nifti_by_max_spacing,
+    resample_nifti_folder,
+    run_conversion,
+)
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,8 +46,14 @@ class App(tk.Tk):
 
         # NIfTI tools tab vars
         self.nifti_dir = tk.StringVar(value="")
+        self.nifti_out_dir = tk.StringVar(value="")
         self.nifti_max_spacing = tk.DoubleVar(value=5.0)
         self.nifti_delete = tk.BooleanVar(value=True)
+        self.rs_x = tk.DoubleVar(value=1.0)
+        self.rs_y = tk.DoubleVar(value=1.0)
+        self.rs_z = tk.DoubleVar(value=1.0)
+        self.rs_interp = tk.StringVar(value="linear")
+        self.rs_skip_exists = tk.BooleanVar(value=True)
 
         self._build_ui()
         self.after(100, self._drain_queues)
@@ -114,6 +127,7 @@ class App(tk.Tk):
         grid2 = ttk.Frame(tab_nifti)
         grid2.pack(fill="x")
         row(grid2, "NIfTI 文件夹", self.nifti_dir, self._choose_nifti_dir)
+        row(grid2, "输出文件夹", self.nifti_out_dir, self._choose_nifti_out_dir)
 
         opts2 = ttk.Labelframe(tab_nifti, text="过滤设置", padding=10)
         opts2.pack(fill="x", pady=(10, 0))
@@ -122,6 +136,23 @@ class App(tk.Tk):
         ttk.Label(n1, text="最大 spacing(mm)").pack(side="left")
         ttk.Entry(n1, textvariable=self.nifti_max_spacing, width=10).pack(side="left", padx=(6, 16))
         ttk.Checkbutton(n1, text="直接删除不符合文件", variable=self.nifti_delete).pack(side="left")
+
+        rs_box = ttk.Labelframe(tab_nifti, text="重采样（Resample）", padding=10)
+        rs_box.pack(fill="x", pady=(10, 0))
+        r1 = ttk.Frame(rs_box)
+        r1.pack(fill="x", pady=4)
+        ttk.Label(r1, text="目标 spacing x").pack(side="left")
+        ttk.Entry(r1, textvariable=self.rs_x, width=8).pack(side="left", padx=(6, 12))
+        ttk.Label(r1, text="y").pack(side="left")
+        ttk.Entry(r1, textvariable=self.rs_y, width=8).pack(side="left", padx=(6, 12))
+        ttk.Label(r1, text="z").pack(side="left")
+        ttk.Entry(r1, textvariable=self.rs_z, width=8).pack(side="left", padx=(6, 16))
+
+        ttk.Label(r1, text="插值").pack(side="left")
+        ttk.Combobox(r1, textvariable=self.rs_interp, values=["linear", "nearest"], width=10, state="readonly").pack(
+            side="left", padx=(6, 16)
+        )
+        ttk.Checkbutton(r1, text="输出已存在则跳过", variable=self.rs_skip_exists).pack(side="left")
 
         # 留出后续扩展空间
         ext = ttk.Labelframe(tab_nifti, text="更多功能（预留）", padding=10)
@@ -132,6 +163,8 @@ class App(tk.Tk):
         actions2.pack(fill="x", pady=(10, 0))
         self.btn_nifti_clean = ttk.Button(actions2, text="按 spacing 过滤", command=self._start_nifti_clean)
         self.btn_nifti_clean.pack(side="left")
+        self.btn_nifti_resample = ttk.Button(actions2, text="重采样到指定 spacing", command=self._start_nifti_resample)
+        self.btn_nifti_resample.pack(side="left", padx=(8, 0))
         ttk.Button(actions2, text="清空日志", command=self._clear_log).pack(side="left", padx=8)
 
         self.prog = ttk.Progressbar(frm, mode="determinate")
@@ -158,6 +191,11 @@ class App(tk.Tk):
         d = filedialog.askdirectory(title="选择 NIfTI 文件夹")
         if d:
             self.nifti_dir.set(d)
+
+    def _choose_nifti_out_dir(self) -> None:
+        d = filedialog.askdirectory(title="选择输出文件夹")
+        if d:
+            self.nifti_out_dir.set(d)
 
     def _choose_phase_map(self) -> None:
         p = filedialog.askopenfilename(
@@ -227,6 +265,7 @@ class App(tk.Tk):
 
         self.btn_start.config(state="disabled")
         self.btn_nifti_clean.config(state="disabled")
+        self.btn_nifti_resample.config(state="disabled")
         self._append_log("[INFO] 开始转换…")
         self._set_progress(0, 1)
         self.prog_lbl.config(text="进度：准备中…（扫描可能需要一些时间）")
@@ -268,12 +307,64 @@ class App(tk.Tk):
         cfg = NiftiCleanConfig(input_dir=d, max_spacing_mm=max_s, delete=delete)
         self.btn_start.config(state="disabled")
         self.btn_nifti_clean.config(state="disabled")
+        self.btn_nifti_resample.config(state="disabled")
         self._append_log("[INFO] 开始 NIfTI 过滤…")
         self._set_progress(0, 1)
 
         def worker():
             try:
                 clean_nifti_by_max_spacing(
+                    cfg,
+                    log=lambda s: self._log_q.put(s),
+                    progress=lambda c, t: self._prog_q.put((c, t)),
+                )
+            except Exception:
+                self._log_q.put("[EXCEPTION] 后台任务异常：")
+                self._log_q.put(traceback.format_exc())
+            finally:
+                self._log_q.put("[INFO] 任务结束")
+                self._prog_q.put((-1, -1))
+
+        self._worker = threading.Thread(target=worker, daemon=True)
+        self._worker.start()
+
+    def _start_nifti_resample(self) -> None:
+        if self._worker and self._worker.is_alive():
+            messagebox.showinfo("提示", "有任务正在进行中")
+            return
+
+        in_dir = self.nifti_dir.get().strip()
+        out_dir = self.nifti_out_dir.get().strip()
+        if not in_dir or not os.path.isdir(in_dir):
+            messagebox.showerror("错误", "请输入有效的 NIfTI 文件夹")
+            return
+        if not out_dir:
+            messagebox.showerror("错误", "请输入输出文件夹")
+            return
+
+        try:
+            target = (float(self.rs_x.get()), float(self.rs_y.get()), float(self.rs_z.get()))
+        except Exception:
+            messagebox.showerror("错误", "目标 spacing 必须是数字")
+            return
+
+        cfg = NiftiResampleConfig(
+            input_dir=in_dir,
+            output_dir=out_dir,
+            target_spacing=target,
+            interpolator=self.rs_interp.get().strip() or "linear",
+            skip_if_exists=bool(self.rs_skip_exists.get()),
+        )
+
+        self.btn_start.config(state="disabled")
+        self.btn_nifti_clean.config(state="disabled")
+        self.btn_nifti_resample.config(state="disabled")
+        self._append_log("[INFO] 开始 NIfTI 重采样…")
+        self._set_progress(0, 1)
+
+        def worker():
+            try:
+                resample_nifti_folder(
                     cfg,
                     log=lambda s: self._log_q.put(s),
                     progress=lambda c, t: self._prog_q.put((c, t)),
@@ -302,6 +393,7 @@ class App(tk.Tk):
                 if cur == -1 and total == -1:
                     self.btn_start.config(state="normal")
                     self.btn_nifti_clean.config(state="normal")
+                    self.btn_nifti_resample.config(state="normal")
                     self.prog_lbl.config(text="完成")
                     break
                 self._set_progress(cur, total)
