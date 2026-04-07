@@ -14,24 +14,83 @@
 
 建议用虚拟环境：
 
+**Windows（PowerShell）**
+
 ```bash
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**Linux / macOS**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+可选：将项目目录加入 `PYTHONPATH`，或始终在仓库根目录执行 `python cli.py`，以便能导入 `converter` 包。
+
 ## 可选（推荐）：安装 dcm2niix
 
 `dcm2niix` 是**外部可执行文件**（不是 pip 包）。本工具会优先调用它来做 DICOM→NIfTI（更接近常用/3D Slicer 生态转换效果）。
 
 - 要求：`dcm2niix` 在系统 `PATH` 可用
-- 验证（PowerShell）：
+- 验证：
 
 ```bash
 dcm2niix -h
 ```
 
 若未安装/不可用，会自动回退到 SimpleITK 后端。
+
+## 命令行（CLI，适合 Linux 服务器）
+
+在仓库根目录执行 `python cli.py`（或 `python3 cli.py`）。支持子命令；**旧写法** `python cli.py -i DICOM_DIR -o OUT_DIR` 仍会自动视为 `convert`。
+
+```bash
+# 查看帮助
+python cli.py --help
+python cli.py convert --help
+python cli.py nifti-clean --help
+python cli.py nifti-resample --help
+```
+
+### `convert`：DICOM → NIfTI
+
+```bash
+python cli.py convert -i /data/dicom_root -o /data/nifti_out \
+  --phase-map /path/to/phase_map.yaml \
+  --max-spacing 5.0 --min-slices 16 \
+  --prefix MyStudy
+```
+
+常用参数：`--use-series-description`、`--filter-patient-position`、`--allowed-patient-positions HFS,FFS`、`--no-localizer-filter`、`--no-skip-exists`。
+
+与旧版等价（无子命令）：
+
+```bash
+python cli.py -i /data/dicom_root -o /data/nifti_out --phase-map phase_map.yaml
+```
+
+### `nifti-clean`：按 max(spacing) 删除 NIfTI
+
+**会先建议用 `--dry-run` 只看日志，不删文件。**
+
+```bash
+python cli.py nifti-clean -i /data/nifti --max-spacing 5.0 --dry-run
+python cli.py nifti-clean -i /data/nifti --max-spacing 5.0
+```
+
+### `nifti-resample`：批量重采样到指定 spacing `[x,y,z]` mm
+
+```bash
+python cli.py nifti-resample -i /data/nifti_in -o /data/nifti_out --spacing 1,1,1
+python cli.py nifti-resample -i /data/nifti_in -o /data/nifti_out --spacing 0.8,0.8,1.5 --interp nearest
+```
+
+默认若输出文件已存在则跳过；需要覆盖时加 `--no-skip-exists`。
 
 ## 运行（GUI）
 
